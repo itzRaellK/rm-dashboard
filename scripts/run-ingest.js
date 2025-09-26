@@ -1,4 +1,3 @@
-// scripts/run-ingest.js
 import 'dotenv/config';
 import fetch from 'node-fetch';
 import pkg from 'pg';
@@ -74,12 +73,15 @@ async function main() {
             row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
           if (isDistribHeader) continue;
 
+          // Use o nome da aba retornado pelo exportador (normalizado)
+          const abaMesRetornada = data.tab; // Ex: "MARCO", "JANEIRO", etc.
+
           await client.query(
             `insert into stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload)
              values ($1,$2,$3,$4,$5)
              on conflict (source, sheet_id, aba_mes, row_idx)
              do update set payload = excluded.payload, ingested_at = now()`,
-            [tipo, sheet_id, mes, i, JSON.stringify(row)]
+            [tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]
           );
           inserted++;
         }

@@ -76,6 +76,9 @@ async function main() {
             row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
           if (isDistribHeader) continue;
 
+          // Nova regra: pular linhas com '-' na coluna A (cabeçalho fixo em Distribuição)
+          if (tipo === 'DISTRIBUICAO' && row[0] && String(row[0]).trim() === '-') continue;
+
           // Filtro de linhas válidas
           const nome = row[0]; // B
           const cpf = row[1]; // C

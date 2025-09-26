@@ -57,9 +57,10 @@ async function main() {
         }
         console.log(`➡️ ${tipo}/${ano}/${mes}: ${data.rowsCount} linhas x ${data.colCount} colunas`);
 
-        let inserted = 0;
         const rows = data.rows || [];
-        for (let i = 1; i < rows.length; i++) { // pula linha 1 (cabeçalho da sua aba)
+        const batch = [];
+
+        for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
           if (!row || !row.some(v => v && String(v).trim() !== '')) continue;
 
@@ -73,20 +74,27 @@ async function main() {
             row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
           if (isDistribHeader) continue;
 
-          // Use o nome da aba retornado pelo exportador (normalizado)
-          const abaMesRetornada = data.tab; // Ex: "MARCO", "JANEIRO", etc.
+          // Filtro de linhas válidas
+          const nome = row[0]; // B
+          const cpf = row[1]; // C
+          const status = tipo === 'REQUERIMENTOS' ? row[7] : row[8]; // I ou J
 
-          await client.query(
-            `insert into stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload)
-             values ($1,$2,$3,$4,$5)
-             on conflict (source, sheet_id, aba_mes, row_idx)
-             do update set payload = excluded.payload, ingested_at = now()`,
-            [tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]
-          );
-          inserted++;
+          if (tipo === 'REQUERIMENTOS' && (!nome || !cpf)) continue;
+          if (tipo === 'DISTRIBUICAO' && !nome) continue;
+
+          const abaMesRetornada = data.tab; // Ex: "MARCO"
+          batch.push([tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]);
         }
-        totalInserted += inserted;
-        console.log(`✅ Upserts: ${inserted}`);
+
+        // Inserir em lote
+        if (batch.length > 0) {
+          const placeholders = batch.map((_, idx) => `($${idx * 5 + 1}, $${idx * 5 + 2}, $${idx * 5 + 3}, $${idx * 5 + 4}, $${idx * 5 + 5})`).join(', ');
+          const query = `INSERT INTO stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload) VALUES ${placeholders} ON CONFLICT (source, sheet_id, aba_mes, row_idx) DO UPDATE SET payload = excluded.payload, ingested_at = now()`;
+          const values = batch.flat();
+          await client.query(query, values);
+          totalInserted += batch.length;
+          console.log(`✅ Upserts (batch): ${batch.length}`);
+        }
       } catch (err) {
         console.warn(`❗ ${tipo}/${ano}/${mes}: ${err.message}`);
       }

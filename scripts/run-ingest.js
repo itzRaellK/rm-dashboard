@@ -9,6 +9,7 @@ const MESES = [
 ];
 
 const BATCH_SIZE = 900; // Limite de linhas por batch
+const REQUEST_DELAY_MS = 1000; // 1 segundo entre requisições
 
 function logEnvPresence() {
   const has = k => (process.env[k] ? '✅' : '❌');
@@ -26,6 +27,10 @@ async function fetchSheet(sheetId, tab, tipo) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   return json;
+}
+
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function main() {
@@ -106,7 +111,14 @@ async function main() {
 
       } catch (err) {
         console.warn(`❗ ${tipo}/${ano}/${mes}: ${err.message}`);
+        if (err.message.includes('maximum redirect')) {
+          console.log(`⏰ Esperando 5 segundos para evitar mais limites...`);
+          await sleep(5000);
+        }
       }
+
+      // Delay entre requisições para evitar limites do Google
+      await sleep(REQUEST_DELAY_MS);
     }
   }
 

@@ -43,28 +43,51 @@ async function checkSheetTabExists(sheetId, tab, tipo) {
   }
 }
 
-// Nova função: verificar se é cabeçalho fixo de Distribuição
+// Nova função: detectar cabeçalho fixo de Distribuição com tolerância
 function isDistribHeaderRow(row) {
   if (!Array.isArray(row)) return false;
 
-  // Verifica se a primeira coluna é "CLIENTE" (ignorando case e espaços)
+  // Verifica se a primeira coluna é "CLIENTE" (ignorando case, espaços e acentos)
   const firstCol = row[0];
-  if (!firstCol || String(firstCol).trim().toUpperCase() !== 'CLIENTE') return false;
+  if (!firstCol) return false;
 
-  // Verifica se as próximas colunas correspondem ao cabeçalho (com tolerância)
+  const normalizedFirst = String(firstCol).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (normalizedFirst !== 'CLIENTE') return false;
+
+  // Verifica se pelo menos as primeiras colunas correspondem ao cabeçalho esperado
   const expectedHeaders = [
     'CLIENTE','TIPO DE PROCESSO','RESP. PROCESSO','RESP. PETIÇÃO',
     'RESP. CORREÇÃO','RESP. DISTRIBUIÇÃO','COMPETÊNCIA','VALOR DA CAUSA',
     'DISTRIBUÍDO','UNIDADE'
   ];
 
+  let matchCount = 0;
   for (let i = 0; i < Math.min(expectedHeaders.length, row.length); i++) {
-    const actual = String(row[i]).trim().toUpperCase();
+    const actual = String(row[i]).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
     const expected = expectedHeaders[i];
-    if (actual !== expected) return false;
+    if (actual === expected) matchCount++;
   }
 
-  return true;
+  // Se pelo menos 5 das 10 colunas forem iguais, consideramos cabeçalho
+  return matchCount >= 5;
+}
+
+// Nova função: detectar se é uma linha de cabeçalho semelhante
+function isLikelyHeaderRow(row) {
+  if (!Array.isArray(row)) return false;
+
+  const firstCol = row[0];
+  if (!firstCol) return false;
+
+  const normalizedFirst = String(firstCol).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+  // Lista de palavras que indicam cabeçalho
+  const headerKeywords = [
+    'CLIENTE', 'TIPO', 'RESP', 'COMPETÊNCIA', 'VALOR', 'DISTRIBUÍDO', 'UNIDADE',
+    'PROCESSO', 'PETIÇÃO', 'CORREÇÃO', 'DISTRIBUIÇÃO', 'PROTOCOLO', 'BENEFÍCIO'
+  ];
+
+  return headerKeywords.some(k => normalizedFirst.includes(k));
 }
 
 async function sleep(ms) {
@@ -130,6 +153,9 @@ async function main() {
 
             // Nova regra: pular linhas com '-' na coluna A (cabeçalho fixo em Distribuição)
             if (tipo === 'DISTRIBUICAO' && row[0] && String(row[0]).trim() === '-') continue;
+
+            // Nova regra: pular linhas que parecem cabeçalhos (genérico)
+            if (isLikelyHeaderRow(row)) continue;
 
             // Filtro de linhas válidas
             const nome = row[0]; // B

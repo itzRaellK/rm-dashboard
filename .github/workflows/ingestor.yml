@@ -1,0 +1,28 @@
+name: Ingest Sheets
+
+on:
+  schedule:
+    - cron: '0,15,30,45 * * * *'   # a cada 15 min (UTC)
+  workflow_dispatch: {}            # permite rodar manualmente pelo botão "Run workflow"
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run ingestor
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EXPORTER_URL:  ${{ secrets.EXPORTER_URL }}
+          EXPORTER_TOKEN: ${{ secrets.EXPORTER_TOKEN }}
+        run: node scripts/run-ingest.js

@@ -43,6 +43,30 @@ async function checkSheetTabExists(sheetId, tab, tipo) {
   }
 }
 
+// Nova função: verificar se é cabeçalho fixo de Distribuição
+function isDistribHeaderRow(row) {
+  if (!Array.isArray(row)) return false;
+
+  // Verifica se a primeira coluna é "CLIENTE" (ignorando case e espaços)
+  const firstCol = row[0];
+  if (!firstCol || String(firstCol).trim().toUpperCase() !== 'CLIENTE') return false;
+
+  // Verifica se as próximas colunas correspondem ao cabeçalho (com tolerância)
+  const expectedHeaders = [
+    'CLIENTE','TIPO DE PROCESSO','RESP. PROCESSO','RESP. PETIÇÃO',
+    'RESP. CORREÇÃO','RESP. DISTRIBUIÇÃO','COMPETÊNCIA','VALOR DA CAUSA',
+    'DISTRIBUÍDO','UNIDADE'
+  ];
+
+  for (let i = 0; i < Math.min(expectedHeaders.length, row.length); i++) {
+    const actual = String(row[i]).trim().toUpperCase();
+    const expected = expectedHeaders[i];
+    if (actual !== expected) return false;
+  }
+
+  return true;
+}
+
 async function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -102,14 +126,7 @@ async function main() {
             if (!row || !row.some(v => v && String(v).trim() !== '')) continue;
 
             // Ignorar cabeçalho fixo de DISTRIBUICAO
-            const headerDistrib = [
-              'CLIENTE','TIPO DE PROCESSO','RESP. PROCESSO','RESP. PETIÇÃO',
-              'RESP. CORREÇÃO','RESP. DISTRIBUIÇÃO','COMPETÊNCIA','VALOR DA CAUSA',
-              'DISTRIBUÍDO','UNIDADE'
-            ];
-            const isDistribHeader = Array.isArray(row) &&
-              row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
-            if (isDistribHeader) continue;
+            if (tipo === 'DISTRIBUICAO' && isDistribHeaderRow(row)) continue;
 
             // Nova regra: pular linhas com '-' na coluna A (cabeçalho fixo em Distribuição)
             if (tipo === 'DISTRIBUICAO' && row[0] && String(row[0]).trim() === '-') continue;

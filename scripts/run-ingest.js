@@ -10,7 +10,7 @@ const MESES = [
 
 const BATCH_SIZE = 900; // Limite de linhas por batch
 const REQUEST_DELAY_MS = 1000; // 1 segundo entre requisições
-const PLANILHA_TIMEOUT_MS = 30000; // 30 segundos por planilha
+const PLANILHA_TIMEOUT_MS = 60000; // 60 segundos por planilha (era 30)
 
 function logEnvPresence() {
   const has = k => (process.env[k] ? '✅' : '❌');
@@ -119,9 +119,9 @@ async function main() {
   for (const { ano, tipo, sheet_id } of planilhas) {
     console.log(`📁 Processando planilha: ${tipo} (${sheet_id})`);
 
-    // Timeout por planilha
+    // Timeout por planilha (60 segundos)
     const planilhaTimeout = setTimeout(() => {
-      console.warn(`⏰ Timeout de 30s atingido para ${tipo}/${ano}. Pulando...`);
+      console.warn(`⏰ Timeout de 60s atingido para ${tipo}/${ano}. Pulando...`);
     }, PLANILHA_TIMEOUT_MS);
 
     try {
@@ -130,7 +130,7 @@ async function main() {
         const abaExiste = await checkSheetTabExists(sheet_id, mes, tipo);
         if (!abaExiste) {
           console.warn(`⚠️ Aba ${mes} não existe em ${tipo}/${ano}. Pulando...`);
-          continue;
+          continue; // Não precisa esperar delay se a aba não existe
         }
 
         try {

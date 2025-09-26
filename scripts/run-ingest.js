@@ -8,6 +8,8 @@ const MESES = [
   'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'
 ];
 
+const BATCH_SIZE = 900; // Limite de linhas por batch
+
 function logEnvPresence() {
   const has = k => (process.env[k] ? '✅' : '❌');
   console.log('ENV CHECK:',
@@ -58,7 +60,7 @@ async function main() {
         console.log(`➡️ ${tipo}/${ano}/${mes}: ${data.rowsCount} linhas x ${data.colCount} colunas`);
 
         const rows = data.rows || [];
-        const batch = [];
+        const validRows = [];
 
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
@@ -83,18 +85,22 @@ async function main() {
           if (tipo === 'DISTRIBUICAO' && !nome) continue;
 
           const abaMesRetornada = data.tab; // Ex: "MARCO"
-          batch.push([tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]);
+          validRows.push([tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]);
         }
 
-        // Inserir em lote
-        if (batch.length > 0) {
+        // Dividir em batches menores (até 900 linhas por batch)
+        for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+          const batch = validRows.slice(i, i + BATCH_SIZE);
+
           const placeholders = batch.map((_, idx) => `($${idx * 5 + 1}, $${idx * 5 + 2}, $${idx * 5 + 3}, $${idx * 5 + 4}, $${idx * 5 + 5})`).join(', ');
           const query = `INSERT INTO stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload) VALUES ${placeholders} ON CONFLICT (source, sheet_id, aba_mes, row_idx) DO UPDATE SET payload = excluded.payload, ingested_at = now()`;
           const values = batch.flat();
           await client.query(query, values);
           totalInserted += batch.length;
-          console.log(`✅ Upserts (batch): ${batch.length}`);
         }
+
+        console.log(`✅ Upserts (batched): ${validRows.length} linhas`);
+
       } catch (err) {
         console.warn(`❗ ${tipo}/${ano}/${mes}: ${err.message}`);
       }

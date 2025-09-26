@@ -10,6 +10,7 @@ const MESES = [
 
 const BATCH_SIZE = 900; // Limite de linhas por batch
 const REQUEST_DELAY_MS = 1000; // 1 segundo entre requisições
+const PLANILHA_TIMEOUT_MS = 30000; // 30 segundos por planilha
 
 function logEnvPresence() {
   const has = k => (process.env[k] ? '✅' : '❌');
@@ -27,6 +28,19 @@ async function fetchSheet(sheetId, tab, tipo) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   return json;
+}
+
+// Nova função: verificar se a aba existe
+async function checkSheetTabExists(sheetId, tab, tipo) {
+  const url = `${process.env.EXPORTER_URL}?sheetId=${sheetId}&tab=${encodeURIComponent(tab)}&tipo=${tipo}&token=${process.env.EXPORTER_TOKEN}&checkOnly=true`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const json = await res.json();
+    return json.ok === true;
+  } catch (err) {
+    return false;
+  }
 }
 
 async function sleep(ms) {
@@ -54,71 +68,96 @@ async function main() {
   console.log('📄 Planilhas ativas:', planilhas);
 
   let totalInserted = 0;
+
   for (const { ano, tipo, sheet_id } of planilhas) {
-    for (const mes of MESES) {
-      try {
-        const data = await fetchSheet(sheet_id, mes, tipo);
-        if (!data.ok) {
-          console.warn(`⚠️ ${tipo}/${ano}/${mes}: exportador respondeu erro: ${data.error}`);
+    console.log(`📁 Processando planilha: ${tipo} (${sheet_id})`);
+
+    // Timeout por planilha
+    const planilhaTimeout = setTimeout(() => {
+      console.warn(`⏰ Timeout de 30s atingido para ${tipo}/${ano}. Pulando...`);
+    }, PLANILHA_TIMEOUT_MS);
+
+    try {
+      for (const mes of MESES) {
+        // Verificar se a aba existe
+        const abaExiste = await checkSheetTabExists(sheet_id, mes, tipo);
+        if (!abaExiste) {
+          console.warn(`⚠️ Aba ${mes} não existe em ${tipo}/${ano}. Pulando...`);
           continue;
         }
-        console.log(`➡️ ${tipo}/${ano}/${mes}: ${data.rowsCount} linhas x ${data.colCount} colunas`);
 
-        const rows = data.rows || [];
-        const validRows = [];
+        try {
+          const data = await fetchSheet(sheet_id, mes, tipo);
+          if (!data.ok) {
+            console.warn(`⚠️ ${tipo}/${ano}/${mes}: exportador respondeu erro: ${data.error}`);
+            continue;
+          }
+          console.log(`➡️ ${tipo}/${ano}/${mes}: ${data.rowsCount} linhas x ${data.colCount} colunas`);
 
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          if (!row || !row.some(v => v && String(v).trim() !== '')) continue;
+          const rows = data.rows || [];
+          const validRows = [];
 
-          // ignora cabeçalho conhecido de DISTRIBUICAO
-          const headerDistrib = [
-            'CLIENTE','TIPO DE PROCESSO','RESP. PROCESSO','RESP. PETIÇÃO',
-            'RESP. CORREÇÃO','RESP. DISTRIBUIÇÃO','COMPETÊNCIA','VALOR DA CAUSA',
-            'DISTRIBUÍDO','UNIDADE'
-          ];
-          const isDistribHeader = Array.isArray(row) &&
-            row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
-          if (isDistribHeader) continue;
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i];
+            if (!row || !row.some(v => v && String(v).trim() !== '')) continue;
 
-          // Nova regra: pular linhas com '-' na coluna A (cabeçalho fixo em Distribuição)
-          if (tipo === 'DISTRIBUICAO' && row[0] && String(row[0]).trim() === '-') continue;
+            // Ignorar cabeçalho fixo de DISTRIBUICAO
+            const headerDistrib = [
+              'CLIENTE','TIPO DE PROCESSO','RESP. PROCESSO','RESP. PETIÇÃO',
+              'RESP. CORREÇÃO','RESP. DISTRIBUIÇÃO','COMPETÊNCIA','VALOR DA CAUSA',
+              'DISTRIBUÍDO','UNIDADE'
+            ];
+            const isDistribHeader = Array.isArray(row) &&
+              row.map(String).map(s => s.trim().toUpperCase()).join('|') === headerDistrib.join('|');
+            if (isDistribHeader) continue;
 
-          // Filtro de linhas válidas
-          const nome = row[0]; // B
-          const cpf = row[1]; // C
-          const status = tipo === 'REQUERIMENTOS' ? row[7] : row[8]; // I ou J
+            // Nova regra: pular linhas com '-' na coluna A (cabeçalho fixo em Distribuição)
+            if (tipo === 'DISTRIBUICAO' && row[0] && String(row[0]).trim() === '-') continue;
 
-          if (tipo === 'REQUERIMENTOS' && (!nome || !cpf)) continue;
-          if (tipo === 'DISTRIBUICAO' && !nome) continue;
+            // Filtro de linhas válidas
+            const nome = row[0]; // B
+            const cpf = row[1]; // C
+            const status = tipo === 'REQUERIMENTOS' ? row[7] : row[8]; // I ou J
 
-          const abaMesRetornada = data.tab; // Ex: "MARCO"
-          validRows.push([tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]);
+            if (tipo === 'REQUERIMENTOS' && (!nome || !cpf)) continue;
+            if (tipo === 'DISTRIBUICAO' && !nome) continue;
+
+            const abaMesRetornada = data.tab; // Ex: "MARCO"
+            validRows.push([tipo, sheet_id, abaMesRetornada, i, JSON.stringify(row)]);
+          }
+
+          // Dividir em batches menores (até 900 linhas por batch)
+          for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+            const batch = validRows.slice(i, i + BATCH_SIZE);
+
+            const placeholders = batch.map((_, idx) => `($${idx * 5 + 1}, $${idx * 5 + 2}, $${idx * 5 + 3}, $${idx * 5 + 4}, $${idx * 5 + 5})`).join(', ');
+            const query = `INSERT INTO stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload) VALUES ${placeholders} ON CONFLICT (source, sheet_id, aba_mes, row_idx) DO UPDATE SET payload = excluded.payload, ingested_at = now()`;
+            const values = batch.flat();
+            await client.query(query, values);
+            totalInserted += batch.length;
+          }
+
+          console.log(`✅ Upserts (batched): ${validRows.length} linhas`);
+
+        } catch (err) {
+          console.warn(`❗ ${tipo}/${ano}/${mes}: ${err.message}`);
+          if (err.message.includes('maximum redirect')) {
+            console.log(`⏰ Esperando 5 segundos para evitar mais limites...`);
+            await sleep(5000);
+          }
         }
 
-        // Dividir em batches menores (até 900 linhas por batch)
-        for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
-          const batch = validRows.slice(i, i + BATCH_SIZE);
-
-          const placeholders = batch.map((_, idx) => `($${idx * 5 + 1}, $${idx * 5 + 2}, $${idx * 5 + 3}, $${idx * 5 + 4}, $${idx * 5 + 5})`).join(', ');
-          const query = `INSERT INTO stg_sheets_raw (source, sheet_id, aba_mes, row_idx, payload) VALUES ${placeholders} ON CONFLICT (source, sheet_id, aba_mes, row_idx) DO UPDATE SET payload = excluded.payload, ingested_at = now()`;
-          const values = batch.flat();
-          await client.query(query, values);
-          totalInserted += batch.length;
-        }
-
-        console.log(`✅ Upserts (batched): ${validRows.length} linhas`);
-
-      } catch (err) {
-        console.warn(`❗ ${tipo}/${ano}/${mes}: ${err.message}`);
-        if (err.message.includes('maximum redirect')) {
-          console.log(`⏰ Esperando 5 segundos para evitar mais limites...`);
-          await sleep(5000);
-        }
+        // Delay entre requisições para evitar limites do Google
+        await sleep(REQUEST_DELAY_MS);
       }
 
-      // Delay entre requisições para evitar limites do Google
-      await sleep(REQUEST_DELAY_MS);
+      // Limpar timeout
+      clearTimeout(planilhaTimeout);
+      console.log(`✅ Planilha ${tipo} concluída.`);
+
+    } catch (err) {
+      console.error(`💥 Erro fatal na planilha ${tipo}/${ano}:`, err);
+      clearTimeout(planilhaTimeout);
     }
   }
 

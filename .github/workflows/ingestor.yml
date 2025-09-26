@@ -2,7 +2,7 @@ name: Ingest Sheets
 
 on:
   schedule:
-    - cron: '0,15,30,45 * * * *'   # a cada 15 min (UTC)
+    - cron: '*/20 * * * *'  # a cada 20 minutos 
   workflow_dispatch: {}            # permite rodar manualmente pelo botão "Run workflow"
 
 jobs:

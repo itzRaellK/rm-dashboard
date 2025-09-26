@@ -9,8 +9,9 @@ const MESES = [
 ];
 
 const BATCH_SIZE = 900; // Limite de linhas por batch
-const REQUEST_DELAY_MS = 1000; // 1 segundo entre requisições
-const PLANILHA_TIMEOUT_MS = 60000; // 60 segundos por planilha (era 30)
+const REQUEST_DELAY_MS = 1000; // 1 segundo entre requisições (entre abas)
+const PLANILHA_TIMEOUT_MS = 60000; // 60 segundos por planilha
+const ENTRE_PLANILHAS_DELAY_MS = 30000; // 30 segundos entre planilhas
 
 function logEnvPresence() {
   const has = k => (process.env[k] ? '✅' : '❌');
@@ -28,19 +29,6 @@ async function fetchSheet(sheetId, tab, tipo) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   return json;
-}
-
-// Nova função: verificar se a aba existe
-async function checkSheetTabExists(sheetId, tab, tipo) {
-  const url = `${process.env.EXPORTER_URL}?sheetId=${sheetId}&tab=${encodeURIComponent(tab)}&tipo=${tipo}&token=${process.env.EXPORTER_TOKEN}&checkOnly=true`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return false;
-    const json = await res.json();
-    return json.ok === true;
-  } catch (err) {
-    return false;
-  }
 }
 
 // Nova função: detectar cabeçalho fixo de Distribuição com tolerância
@@ -116,7 +104,8 @@ async function main() {
 
   let totalInserted = 0;
 
-  for (const { ano, tipo, sheet_id } of planilhas) {
+  for (let idx = 0; idx < planilhas.length; idx++) {
+    const { ano, tipo, sheet_id } = planilhas[idx];
     console.log(`📁 Processando planilha: ${tipo} (${sheet_id})`);
 
     // Timeout por planilha (60 segundos)
@@ -126,18 +115,11 @@ async function main() {
 
     try {
       for (const mes of MESES) {
-        // Verificar se a aba existe
-        const abaExiste = await checkSheetTabExists(sheet_id, mes, tipo);
-        if (!abaExiste) {
-          console.warn(`⚠️ Aba ${mes} não existe em ${tipo}/${ano}. Pulando...`);
-          continue; // Não precisa esperar delay se a aba não existe
-        }
-
         try {
           const data = await fetchSheet(sheet_id, mes, tipo);
           if (!data.ok) {
             console.warn(`⚠️ ${tipo}/${ano}/${mes}: exportador respondeu erro: ${data.error}`);
-            continue;
+            continue; // Pula para próxima aba
           }
           console.log(`➡️ ${tipo}/${ano}/${mes}: ${data.rowsCount} linhas x ${data.colCount} colunas`);
 
@@ -190,7 +172,7 @@ async function main() {
           }
         }
 
-        // Delay entre requisições para evitar limites do Google
+        // Delay entre requisições para evitar limites do Google (entre abas)
         await sleep(REQUEST_DELAY_MS);
       }
 
@@ -201,6 +183,12 @@ async function main() {
     } catch (err) {
       console.error(`💥 Erro fatal na planilha ${tipo}/${ano}:`, err);
       clearTimeout(planilhaTimeout);
+    }
+
+    // Esperar 30 segundos entre planilhas (para evitar sobrecarga)
+    if (idx < planilhas.length - 1) {
+      console.log(`⏰ Esperando ${ENTRE_PLANILHAS_DELAY_MS / 1000}s entre planilhas...`);
+      await sleep(ENTRE_PLANILHAS_DELAY_MS);
     }
   }
 
